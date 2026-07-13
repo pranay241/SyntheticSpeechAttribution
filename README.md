@@ -59,6 +59,9 @@ Two parallel approaches were built and compared for the same attribution task:
 - Saves the resulting feature table to `tts_features.parquet` (fast,
   compact) and `tts_features.csv` (human-readable) for downstream use.
 
+  <img width="907" height="390" alt="image" src="https://github.com/user-attachments/assets/d4510889-0b22-48b0-b1c4-adcc6dc0c956" />
+
+
 ### 2. Classification (`notebooks/` — classical ML notebook)
 
 - Loads the extracted feature table (`tts_features.parquet`).
@@ -121,3 +124,9 @@ Python, librosa, pandas, NumPy, scikit-learn, XGBoost, Matplotlib
 - Feature ablation to isolate which acoustic cues (classical) or spectral
   regions (CNN) are most attributable to each vocoder/TTS architecture.
 - Ensembling the classical (Random Forest/XGBoost) and CNN predictions.
+
+<img width="1500" height="1500" alt="confusion_matrix" src="https://github.com/user-attachments/assets/9249cd5a-3855-4c17-b638-526252fda533" />
+
+<img width="2700" height="750" alt="training_curves" src="https://github.com/user-attachments/assets/9e68c533-2dd5-4892-a042-9feb2fa64952" />
+
+
