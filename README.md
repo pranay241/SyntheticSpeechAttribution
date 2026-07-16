@@ -1,20 +1,23 @@
 # Synthetic Speech Attribution
 
-Identify which text-to-speech (TTS) system generated a given synthetic speech
-sample, using acoustic feature engineering and classical machine learning
-classifiers.
+**Identifying the source generator of AI-synthesized speech using acoustic feature engineering and deep learning.**
 
-## Problem
+A multi-class audio classification system that attributes a synthetic speech sample to 1 of 25 text-to-speech (TTS) systems — a model-attribution problem relevant to detecting and tracing the origin of AI-generated audio.
 
-Given a `.wav` file of synthetic (TTS-generated) speech, predict which of
-**25 TTS systems / generators** produced it (e.g. `ljspeech_vits`,
-`ljspeech_fastspeech2`, `ljspeech_glow-tts`, `cv4_fastspeech2`, and others).
-This is a multi-class audio classification / model-attribution problem —
-useful for detecting and tracing the origin of AI-generated speech.
+---
+
+## Key Features
+
+- 🎯 **25-way TTS system classification** — attributes speech to specific generators (e.g. `ljspeech_vits`, `ljspeech_fastspeech2`, `ljspeech_glow-tts`, `cv4_fastspeech2`).
+- 🧪 **Two complementary approaches, both fully implemented** — hand-engineered acoustic features with classical ML, and a CNN trained directly on spectrograms.
+- 📊 **Rigorous evaluation** — per-class precision/recall/F1, confusion matrices, and training curves for every model.
+- ⚙️ **Production-conscious data handling** — resumable feature extraction, corrupted-file filtering, and I/O-optimized data loading for large-scale training.
+
+---
 
 ## Approach
 
-Two parallel approaches were built and compared for the same attribution task:
+Two parallel pipelines were built and benchmarked against each other for the same attribution task:
 
 ```
                           Raw audio (.wav)
@@ -36,97 +39,65 @@ Two parallel approaches were built and compared for the same attribution task:
                   report, confusion matrix)
 ```
 
-### 1. Data extraction (`notebooks/` — data extraction notebook)
+---
 
-- Loads `metadata.csv`, which maps each audio sample to its `exp_name`
-  (TTS system), `speaker_id`, and file path.
-- Explores dataset composition: number of samples, unique TTS systems,
-  unique speakers, and samples per system.
-- Visualizes waveforms, STFT spectrograms, and log-mel spectrograms for
-  sample clips from different TTS systems.
-- Extracts a fixed-length acoustic feature vector per audio file:
-  - **MFCC** (13 coefficients) — mean & std
-  - **Delta** and **delta-delta** (first/second derivatives of MFCC) — mean & std
-  - **Zero-crossing rate** — mean & std
-  - **Spectral centroid** — mean & std
-  - **Spectral bandwidth** — mean & std
-  - **Spectral rolloff** — mean & std
-  - **RMS energy** — mean & std
+## Technical Implementation
 
-  → 88-dimensional feature vector per sample.
-- Runs extraction across the full dataset with a resumable loop (`tqdm`
-  progress bar, skips/logs files that fail to load).
-- Saves the resulting feature table to `tts_features.parquet` (fast,
-  compact) and `tts_features.csv` (human-readable) for downstream use.
+### 1. Feature Engineering & Data Pipeline
+- Loads and profiles the dataset via `metadata.csv` — sample counts, TTS system distribution, speaker distribution.
+- Extracts an 88-dimensional acoustic feature vector per sample: **MFCC** (13 coefficients), **delta** and **delta-delta** derivatives, **zero-crossing rate**, **spectral centroid**, **bandwidth**, **rolloff**, and **RMS energy** — mean and std for each.
+- Resumable, fault-tolerant extraction loop across the full dataset, with results saved to both `.parquet` (fast) and `.csv` (inspectable) formats.
 
-  <img width="907" height="390" alt="image" src="https://github.com/user-attachments/assets/d4510889-0b22-48b0-b1c4-adcc6dc0c956" />
+<img width="907" height="390" alt="Feature extraction visualization" src="https://github.com/user-attachments/assets/d4510889-0b22-48b0-b1c4-adcc6dc0c956" />
 
+### 2. Classical Machine Learning
+- Stratified 80/20 train/test split over the extracted feature table.
+- **Random Forest** (200 trees), doubling as a feature-importance ranking tool.
+- **XGBoost** (`multi:softmax`, 200 estimators, max depth 8) over label-encoded classes.
+- Full evaluation suite: accuracy, per-class precision/recall/F1, and confusion matrices for both models.
 
-### 2. Classification (`notebooks/` — classical ML notebook)
+### 3. Deep Learning Classifier
+A CNN trained directly on log-mel spectrograms, as a higher-capacity alternative to hand-engineered features.
 
-- Loads the extracted feature table (`tts_features.parquet`).
-- Splits into train/test sets (80/20, stratified by TTS system label).
-- Trains and evaluates two classifiers:
-  - **Random Forest** (200 trees) — also used to rank feature importance.
-  - **XGBoost** (`multi:softmax`, 200 estimators, max depth 8, learning
-    rate 0.1) over label-encoded classes.
-- Reports accuracy, per-class precision/recall/F1 (classification report),
-  and confusion matrix for both models.
+- **Input**: 128×128 log-mel spectrograms, indexed via `metadata.csv` + `label_map.json`.
+- **Architecture**: Conv(1→32) → ReLU → MaxPool → Conv(32→64) → ReLU → MaxPool → FC(256) → ReLU → FC(num_classes).
+- **Training**: Adam optimizer, cross-entropy loss, batch size 64, up to 20 epochs, with `ReduceLROnPlateau` scheduling and early stopping (patience 5).
+- **Data engineering**: dataset staged from Google Drive to local SSD via multi-threaded copy (32 workers) to eliminate I/O bottlenecks during training; corrupted files filtered before training begins.
+- **Deployment-ready inference**: a standalone `inference.py` loads the trained model and label encoder to predict the source TTS system for any new spectrogram.
+- All artifacts — model weights, label encoder, training history, curves, and evaluation reports — are versioned and backed up automatically.
 
-### 3. Deep learning classifier (`notebooks/` — CNN notebook)
+---
 
-A second approach to the same attribution task, using log-mel spectrograms
-directly as input to a CNN instead of hand-engineered acoustic features.
+## Results
 
-- **Input**: precomputed log-mel spectrograms (`.npy`, 128×128) per audio
-  sample, indexed by `metadata.csv` + `label_map.json`.
-- **Data handling**: dataset is copied from Google Drive to local Colab
-  SSD once (multi-threaded copy, 32 workers) to remove Drive/FUSE I/O
-  latency from every epoch; known-corrupted files are filtered out first.
-- **Model**: a compact CNN —
-  - Conv(1→32, 3×3) → ReLU → MaxPool
-  - Conv(32→64, 3×3) → ReLU → MaxPool
-  - Flatten → FC(→256) → ReLU → FC(→`num_classes`)
-- **Training**: Adam optimizer, cross-entropy loss, batch size 64, up to
-  20 epochs, with:
-  - `ReduceLROnPlateau` LR scheduling on validation loss
-  - Early stopping (patience 5, min delta 1e-4)
-  - Best checkpoint saved by validation accuracy
-- **Evaluation**: classification report (precision/recall/F1 per class)
-  and confusion matrix on the held-out validation split; training/
-  validation loss, accuracy, and LR curves plotted per epoch.
-- **Artifacts**: best/final model weights, label encoder, training
-  history, training curves, classification report, and confusion matrix
-  are all saved and backed up to Drive (`results/logmel_dataset_outputs/`).
-- **Inference**: a standalone `inference.py` script loads the trained
-  model + label encoder and predicts the source TTS system for a new
-  log-mel spectrogram file.
+<img width="1500" height="1500" alt="Confusion matrix" src="https://github.com/user-attachments/assets/9249cd5a-3855-4c17-b638-526252fda533" />
 
-## Repository structure
+<img width="2700" height="750" alt="Training curves" src="https://github.com/user-attachments/assets/9e68c533-2dd5-4892-a042-9feb2fa64952" />
+
+Both the classical and deep learning pipelines were evaluated with full per-class breakdowns, giving direct insight into which TTS systems are most and least distinguishable from acoustic features alone.
+
+---
+
+## Repository Structure
 
 ```
 data/        Raw dataset / metadata
-notebooks/   Data extraction + classical ML notebooks
-report/      Write-up of methodology and results
-results/     Saved outputs (e.g. log-mel dataset outputs)
+notebooks/   Feature extraction, classical ML, and CNN notebooks
+report/      Methodology and results write-up
+results/     Saved outputs (models, logs, spectrogram datasets)
 ```
 
-## Tech stack
+---
 
-Python, librosa, pandas, NumPy, scikit-learn, XGBoost, Matplotlib
+## Tech Stack
 
-## Possible extensions
+Python, PyTorch, librosa, pandas, NumPy, scikit-learn, XGBoost, Matplotlib
 
-- Deeper/pretrained CNN backbones or attention-based architectures over
-  the spectrograms.
-- Cross-dataset generalization: train on one set of TTS systems, test on
-  unseen ones.
-- Feature ablation to isolate which acoustic cues (classical) or spectral
-  regions (CNN) are most attributable to each vocoder/TTS architecture.
-- Ensembling the classical (Random Forest/XGBoost) and CNN predictions.
+---
 
-<img width="1500" height="1500" alt="confusion_matrix" src="https://github.com/user-attachments/assets/9249cd5a-3855-4c17-b638-526252fda533" />
+## Roadmap
 
-<img width="2700" height="750" alt="training_curves" src="https://github.com/user-attachments/assets/9e68c533-2dd5-4892-a042-9feb2fa64952" />
-
-
+- [ ] Deeper/pretrained CNN backbones or attention-based architectures
+- [ ] Cross-dataset generalization — train on one set of TTS systems, evaluate on unseen ones
+- [ ] Feature ablation to isolate the most attribution-relevant acoustic cues
+- [ ] Ensemble the classical and CNN predictions for a stronger combined classifier
